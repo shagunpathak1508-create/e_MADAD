@@ -3,6 +3,9 @@ import '../theme/app_theme.dart';
 import '../models/volunteer_model.dart';
 import '../services/firestore_service.dart';
 import '../services/sms_service.dart';
+import '../services/cache_service.dart';
+import '../services/demo_service.dart';
+import '../services/location_service.dart';
 
 class VolunteerMatchScreen extends StatefulWidget {
   const VolunteerMatchScreen({super.key});
@@ -13,376 +16,247 @@ class VolunteerMatchScreen extends StatefulWidget {
 class _VolunteerMatchScreenState extends State<VolunteerMatchScreen> {
   String _emergencyType = '';
   String _action = '';
+  Stream<List<VolunteerModel>>? _matchStream;
+  bool _isInit = false;
+
+  // Immediate fallback — shown while Firestore stream loads
+  List<VolunteerModel> _fallback = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _bootstrapFallback();
+  }
+
+  /// Load cached + demo data synchronously so the list is never blank.
+  Future<void> _bootstrapFallback() async {
+    final cached = await CacheService.getCachedVolunteers();
+    if (mounted) {
+      setState(() {
+        _fallback = cached.isNotEmpty
+            ? cached
+            : DemoService.dummyVolunteers;
+      });
+    }
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final args =
-        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-    _emergencyType = args?['emergencyType'] ?? 'Medical';
-    _action = args?['action'] ?? '';
+    if (!_isInit) {
+      final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+      _emergencyType = args?['emergencyType'] ?? 'Medical';
+      _action        = args?['action']        ?? '';
+      _matchStream   = FirestoreService.topMatches(_emergencyType);
+      _isInit = true;
+
+      // Refine fallback to match emergency type
+      _fallback = DemoService.filteredVolunteers(_emergencyType);
+    }
   }
 
+  // ── Build ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.offWhite,
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
+        backgroundColor: Colors.white, elevation: 0,
         leading: GestureDetector(
           onTap: () => Navigator.pop(context),
           child: Container(
             margin: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppTheme.offWhite,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.arrow_back_ios_new_rounded,
-                size: 18, color: AppTheme.textDark),
+            decoration: BoxDecoration(color: AppTheme.offWhite, borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: AppTheme.textDark),
           ),
         ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Available Volunteers',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-            Text('Best matched for $_emergencyType',
-                style: TextStyle(fontSize: 12, color: AppTheme.textGrey)),
-          ],
-        ),
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Available Volunteers', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+          Text('Best matched for $_emergencyType', style: TextStyle(fontSize: 12, color: AppTheme.textGrey)),
+        ]),
       ),
       body: StreamBuilder<List<VolunteerModel>>(
-        stream: FirestoreService.topMatches(_emergencyType),
+        stream: _matchStream,
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(
-                child: CircularProgressIndicator(color: AppTheme.orange));
+          // Priority: Firestore → fallback (cached / demo) — NEVER empty
+          final List<VolunteerModel> allVolunteers;
+          if (snap.hasData && snap.data!.isNotEmpty) {
+            allVolunteers = snap.data!;
+            CacheService.cacheVolunteers(snap.data!);
+          } else {
+            allVolunteers = _fallback;
           }
-          final volunteers = snap.data ?? _demoVolunteers();
-          if (volunteers.isEmpty) {
-            return _buildEmpty();
-          }
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // Request info banner
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppTheme.orange.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(14),
-                  border:
-                      Border.all(color: AppTheme.orange.withOpacity(0.2)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.info_outline_rounded,
-                        color: AppTheme.orange, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _action,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
+
+          final volunteers = allVolunteers.take(3).toList();
+
+          return ListView(padding: const EdgeInsets.all(16), children: [
+            // Request info banner
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.orange.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppTheme.orange.withValues(alpha: 0.2)),
               ),
-              const SizedBox(height: 16),
-              Text('${volunteers.length} volunteers found',
-                  style: TextStyle(
-                      color: AppTheme.textGrey,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500)),
-              const SizedBox(height: 10),
-              ...volunteers.asMap().entries.map((entry) =>
-                  _VolunteerCard(
-                    vol: entry.value,
-                    isBestMatch: entry.key == 0,
-                    action: _action,
-                    emergencyType: _emergencyType,
-                  )),
-            ],
-          );
+              child: Row(children: [
+                const Icon(Icons.info_outline_rounded, color: AppTheme.orange, size: 20),
+                const SizedBox(width: 10),
+                Expanded(child: Text(
+                  _action.isEmpty ? 'Emergency help needed' : _action,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                )),
+              ]),
+            ),
+            const SizedBox(height: 16),
+
+            // Volunteer cards
+            if (volunteers.isEmpty)
+              const Center(child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text('Searching for volunteers…',
+                    style: TextStyle(color: AppTheme.textGrey, fontSize: 14)),
+              ))
+            else
+              ...volunteers.map((vol) => _VolunteerCard(
+                vol: vol, emergencyType: _emergencyType,
+              )),
+
+            const SizedBox(height: 80),
+          ]);
         },
       ),
     );
   }
-
-  Widget _buildEmpty() {
-    final demos = _demoVolunteers();
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.amber.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.amber.withOpacity(0.3)),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.wifi_off_rounded, color: Colors.amber),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Showing cached volunteers. Connect to internet for live matching.',
-                  style: TextStyle(fontSize: 12),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        ...demos.asMap().entries.map((e) => _VolunteerCard(
-              vol: e.value,
-              isBestMatch: e.key == 0,
-              action: _action,
-              emergencyType: _emergencyType,
-            )),
-      ],
-    );
-  }
-
-  List<VolunteerModel> _demoVolunteers() => [
-        VolunteerModel(
-            id: '1', name: 'Rajesh Kumar', phone: '+91 98765 43210',
-            skills: ['First Aid', 'Transport'], isAvailable: true,
-            tasksCompleted: 34, responseRate: 0.91),
-        VolunteerModel(
-            id: '2', name: 'Priya Sharma', phone: '+91 87654 32109',
-            skills: ['First Aid', 'Shelter'], isAvailable: true,
-            tasksCompleted: 22, responseRate: 0.78),
-        VolunteerModel(
-            id: '3', name: 'Arjun Mehta', phone: '+91 76543 21098',
-            skills: ['Transport', 'Search & Rescue'], isAvailable: true,
-            tasksCompleted: 15, responseRate: 0.65),
-      ];
 }
 
+// ── Volunteer card ────────────────────────────────────────────────────────────
 class _VolunteerCard extends StatelessWidget {
   final VolunteerModel vol;
-  final bool isBestMatch;
-  final String action;
   final String emergencyType;
-
-  const _VolunteerCard({
-    required this.vol,
-    required this.isBestMatch,
-    required this.action,
-    required this.emergencyType,
-  });
+  const _VolunteerCard({required this.vol, required this.emergencyType});
 
   @override
   Widget build(BuildContext context) {
-    final score = vol.reliabilityScore.toInt();
-
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: isBestMatch
-            ? Border.all(color: AppTheme.orange, width: 2)
-            : Border.all(color: Colors.transparent),
-        boxShadow: [
-          BoxShadow(
-              color: isBestMatch
-                  ? AppTheme.orange.withOpacity(0.15)
-                  : Colors.black.withOpacity(0.05),
-              blurRadius: 16,
-              offset: const Offset(0, 4))
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 12, offset: const Offset(0, 4))],
       ),
-      child: Column(
-        children: [
-          if (isBestMatch)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              decoration: BoxDecoration(
-                color: AppTheme.orange,
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(16)),
-              ),
-              child: const Text('⭐ Best Match',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12)),
-            ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: AppTheme.orange.withOpacity(0.15),
-                      child: Text(
-                        vol.name.isNotEmpty ? vol.name[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                            color: AppTheme.orange,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 20),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(vol.name,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w700, fontSize: 15)),
-                          const SizedBox(height: 3),
-                          Wrap(
-                            spacing: 6,
-                            children: vol.skills.take(3).map((s) =>
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                    color: AppTheme.green.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(8)),
-                                child: Text(s,
-                                    style: const TextStyle(
-                                        color: AppTheme.green, fontSize: 11,
-                                        fontWeight: FontWeight.w600)),
-                              )).toList(),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // Reliability score
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('Reliability Score',
-                                  style: TextStyle(
-                                      color: AppTheme.textGrey, fontSize: 12)),
-                              Text('$score%',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
-                                      color: AppTheme.orange)),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: score / 100,
-                              minHeight: 6,
-                              backgroundColor: Colors.grey.shade200,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                score >= 70
-                                    ? AppTheme.green
-                                    : score >= 40
-                                        ? AppTheme.orange
-                                        : AppTheme.danger,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('${vol.tasksCompleted} tasks done',
-                                  style: TextStyle(
-                                      color: AppTheme.textGrey, fontSize: 11)),
-                              Text(
-                                  '${(vol.responseRate * 100).toInt()}% response rate',
-                                  style: TextStyle(
-                                      color: AppTheme.textGrey, fontSize: 11)),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // Call + SMS buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => SmsService.callNumber(vol.phone),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          decoration: BoxDecoration(
-                              color: AppTheme.green,
-                              borderRadius: BorderRadius.circular(12)),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.phone_rounded,
-                                  color: Colors.white, size: 18),
-                              SizedBox(width: 8),
-                              Text('Call',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => SmsService.sendEmergencySMS(
-                          emergencyType: emergencyType,
-                          action: action,
-                          lat: null, lng: null,
-                          recipients: [vol.phone],
-                        ),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          decoration: BoxDecoration(
-                              color: AppTheme.orange.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                  color: AppTheme.orange.withOpacity(0.3))),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.sms_rounded,
-                                  color: AppTheme.orange, size: 18),
-                              SizedBox(width: 8),
-                              Text('SMS',
-                                  style: TextStyle(
-                                      color: AppTheme.orange,
-                                      fontWeight: FontWeight.w700)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+      child: Column(children: [
+        // Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppTheme.green.withValues(alpha: 0.05),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(17)),
           ),
-        ],
-      ),
+          child: Row(children: [
+            CircleAvatar(
+              radius: 22,
+              backgroundColor: AppTheme.green.withValues(alpha: 0.15),
+              child: Text(vol.name.isNotEmpty ? vol.name[0].toUpperCase() : '?',
+                  style: const TextStyle(color: AppTheme.green, fontWeight: FontWeight.w800, fontSize: 18)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(vol.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+              Text('⭐ ${vol.displayRating.toStringAsFixed(1)} reliability',
+                  style: TextStyle(color: AppTheme.textGrey, fontSize: 12)),
+            ])),
+            // Distance badge
+            FutureBuilder<String>(
+              future: _distanceLabel(vol),
+              builder: (ctx, snap) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: AppTheme.green.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                child: Text(snap.data ?? '…', style: const TextStyle(color: AppTheme.green, fontWeight: FontWeight.w700, fontSize: 12)),
+              ),
+            ),
+          ]),
+        ),
+
+        // Skills + response time
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(children: [
+            Expanded(child: Wrap(spacing: 6, runSpacing: 4,
+              children: vol.skills.map((s) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppTheme.orange.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(s, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.orange)),
+              )).toList(),
+            )),
+            const SizedBox(width: 8),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('${vol.tasksCompleted} tasks', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+              Text('~${vol.avgResponseTime.toStringAsFixed(0)} min avg',
+                  style: TextStyle(color: AppTheme.textGrey, fontSize: 11)),
+            ]),
+          ]),
+        ),
+
+        // Buttons
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          child: Row(children: [
+            Expanded(child: _Btn(
+              label: 'Call', icon: Icons.phone_rounded, color: AppTheme.green,
+              onTap: () => SmsService.callNumber(vol.phone),
+            )),
+            const SizedBox(width: 10),
+            Expanded(child: _Btn(
+              label: 'SMS', icon: Icons.sms_rounded, color: AppTheme.orange, outlined: true,
+              onTap: () => SmsService.sendEmergencySMS(
+                  emergencyType: emergencyType, action: 'I need help urgently',
+                  lat: null, lng: null, recipients: [vol.phone]),
+            )),
+          ]),
+        ),
+      ]),
     );
   }
+
+  Future<String> _distanceLabel(VolunteerModel vol) async {
+    try {
+      final pos = await LocationService.getCurrentLocation();
+      final dist = LocationService.distanceBetween(
+          pos.latitude, pos.longitude, vol.lat, vol.lng);
+      final km = dist / 1000;
+      return km < 1 ? '${dist.toInt()}m' : '${km.toStringAsFixed(1)} km';
+    } catch (_) {
+      return '…';
+    }
+  }
+}
+
+class _Btn extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool outlined;
+  final VoidCallback onTap;
+  const _Btn({required this.label, required this.icon, required this.color, this.outlined = false, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        color: outlined ? color.withValues(alpha: 0.08) : color,
+        borderRadius: BorderRadius.circular(10),
+        border: outlined ? Border.all(color: color.withValues(alpha: 0.3)) : null,
+      ),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(icon, color: outlined ? color : Colors.white, size: 16),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(color: outlined ? color : Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+      ]),
+    ),
+  );
 }

@@ -35,31 +35,26 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
 
     try {
       final pos = await LocationService.getCurrentLocation();
+      // getCurrentLocation() always returns a valid position (GPS or demo fallback)
+      
       final vol = VolunteerModel(
         id: '',
         name: _nameCtrl.text.trim(),
         phone: _phoneCtrl.text.trim(),
         skills: _selectedSkills.toList(),
-        isAvailable: _isAvailable,
+        available: _isAvailable,
         tasksCompleted: 0,
-        responseRate: 0.0,
-        location: pos != null
-            ? _toGeoPoint(pos.latitude, pos.longitude)
-            : null,
+        lat: pos.latitude,
+        lng: pos.longitude,
       );
       await FirestoreService.registerVolunteer(vol);
       if (mounted) Navigator.pushReplacementNamed(context, '/dashboard');
     } catch (e) {
+      debugPrint('Registration error: $e');
       _showSnack('Registration failed. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  dynamic _toGeoPoint(double lat, double lng) {
-    // We import GeoPoint from firestore directly in the service
-    // For this screen we just pass the location generically
-    return null;
   }
 
   void _showSnack(String msg) {
@@ -106,7 +101,7 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
+                gradient: const LinearGradient(
                     colors: [AppTheme.green, AppTheme.greenLight]),
                 borderRadius: BorderRadius.circular(18),
               ),
@@ -115,7 +110,7 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
                   Container(
                     width: 52, height: 52,
                     decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
+                        color: Colors.white.withValues(alpha: 0.2),
                         shape: BoxShape.circle),
                     child: const Icon(Icons.volunteer_activism_rounded,
                         color: Colors.white, size: 28),
@@ -139,7 +134,7 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
             ),
             const SizedBox(height: 24),
 
-            _SectionLabel('Full Name'),
+            const _SectionLabel('Full Name'),
             const SizedBox(height: 8),
             _Input(
               controller: _nameCtrl,
@@ -148,7 +143,7 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
             ),
             const SizedBox(height: 16),
 
-            _SectionLabel('Phone Number'),
+            const _SectionLabel('Phone Number'),
             const SizedBox(height: 8),
             _Input(
               controller: _phoneCtrl,
@@ -158,7 +153,7 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
             ),
             const SizedBox(height: 20),
 
-            _SectionLabel('Select Skills (up to 3)'),
+            const _SectionLabel('Select Skills (up to 3)'),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8, runSpacing: 8,
@@ -185,7 +180,7 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
                           color: selected ? AppTheme.green : const Color(0xFFE0E0E0)),
                       boxShadow: selected
                           ? [BoxShadow(
-                              color: AppTheme.green.withOpacity(0.2),
+                              color: AppTheme.green.withValues(alpha: 0.2),
                               blurRadius: 8)]
                           : [],
                     ),
@@ -231,7 +226,8 @@ class _VolunteerSignupScreenState extends State<VolunteerSignupScreen> {
                   Switch(
                     value: _isAvailable,
                     onChanged: (v) => setState(() => _isAvailable = v),
-                    activeColor: AppTheme.green,
+                    activeTrackColor: AppTheme.green.withValues(alpha: 0.5),
+                    activeThumbColor: AppTheme.green,
                   ),
                 ],
               ),

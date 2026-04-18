@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:permission_handler/permission_handler.dart';
 import '../theme/app_theme.dart';
 
@@ -11,7 +12,6 @@ class PermissionsScreen extends StatefulWidget {
 class _PermissionsScreenState extends State<PermissionsScreen> {
   bool _locationGranted = false;
   bool _contactsGranted = false;
-  bool _loading = false;
 
   @override
   void initState() {
@@ -21,14 +21,24 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
 
   Future<void> _checkPermissions() async {
     final loc = await Permission.location.status;
-    final con = await Permission.contacts.status;
+    bool conGranted = false;
+    
+    if (!kIsWeb) {
+      final con = await Permission.contacts.status;
+      conGranted = con.isGranted;
+    }
+    
     setState(() {
       _locationGranted = loc.isGranted;
-      _contactsGranted = con.isGranted;
+      _contactsGranted = conGranted;
     });
   }
 
   Future<void> _requestPermission(Permission perm, bool isLocation) async {
+    if (!isLocation && kIsWeb) {
+      // Contacts not supported on web
+      return;
+    }
     final status = await perm.request();
     setState(() {
       if (isLocation) {
@@ -40,9 +50,16 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
   }
 
   Future<void> _continue() async {
-    if (!_locationGranted || !_contactsGranted) return;
-    setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 300));
+    // Location is mandatory; contacts is optional (for SMS)
+    if (!_locationGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Location access is required for emergency services'),
+          backgroundColor: AppTheme.danger,
+        ),
+      );
+      return;
+    }
     if (mounted) Navigator.pushReplacementNamed(context, '/home');
   }
 
@@ -66,7 +83,7 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: AppTheme.orange.withOpacity(0.35),
+                      color: AppTheme.orange.withValues(alpha: 0.35),
                       blurRadius: 20,
                       offset: const Offset(0, 8),
                     ),
@@ -76,7 +93,7 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
               ),
               const SizedBox(height: 24),
               Text(
-                'Welcome to eमदद',
+                'Welcome to E-मदद',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.w800,
                       color: AppTheme.textDark,
@@ -90,80 +107,92 @@ class _PermissionsScreenState extends State<PermissionsScreen> {
               ),
               const SizedBox(height: 40),
 
-              // Location card
+              // Location card (mandatory)
               _PermissionCard(
                 icon: Icons.location_on_rounded,
                 title: 'Location Access',
                 subtitle: 'Required to find nearby help and services',
                 granted: _locationGranted,
+                mandatory: true,
                 onTap: () => _requestPermission(Permission.location, true),
               ),
               const SizedBox(height: 16),
 
-              // Contacts card
+              // Contacts card (optional)
               _PermissionCard(
                 icon: Icons.contacts_rounded,
                 title: 'Contacts Access',
-                subtitle: 'Alert your emergency contacts when needed',
+                subtitle: 'Alert your emergency contacts via SMS',
                 granted: _contactsGranted,
+                mandatory: false,
                 onTap: () => _requestPermission(Permission.contacts, false),
               ),
               const SizedBox(height: 24),
 
-              // Privacy notice
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.orange.withOpacity(0.15)),
-                ),
-                child: Text(
-                  'Your data is only used during emergencies and is never shared with third parties without your consent.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: AppTheme.textGrey,
-                    fontSize: 12,
+              // Warning if contacts not granted
+              if (!_contactsGranted && _locationGranted)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 18),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Contacts access is optional but helps send emergency SMS to your contacts.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
+
+              if (_contactsGranted || !_locationGranted)
+                // Privacy notice
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.orange.withValues(alpha: 0.15)),
+                  ),
+                  child: Text(
+                    'Your data is only used during emergencies and is never shared with third parties without your consent.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppTheme.textGrey,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               const Spacer(),
 
-              // Continue button
+              // Continue button — enabled when location granted
               SizedBox(
                 width: double.infinity,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  child: ElevatedButton(
-                    onPressed: (_locationGranted && _contactsGranted && !_loading)
-                        ? _continue
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: (_locationGranted && _contactsGranted)
-                          ? AppTheme.orange
-                          : AppTheme.orange.withOpacity(0.4),
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      elevation: 0,
+                child: ElevatedButton(
+                  onPressed: _locationGranted ? _continue : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _locationGranted
+                        ? AppTheme.orange
+                        : AppTheme.orange.withValues(alpha: 0.4),
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  child: const Text(
+                    'Continue',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
                     ),
-                    child: _loading
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2.5,
-                            ),
-                          )
-                        : const Text(
-                            'Continue',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
                   ),
                 ),
               ),
@@ -180,6 +209,7 @@ class _PermissionCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool granted;
+  final bool mandatory;
   final VoidCallback onTap;
 
   const _PermissionCard({
@@ -188,6 +218,7 @@ class _PermissionCard extends StatelessWidget {
     required this.subtitle,
     required this.granted,
     required this.onTap,
+    this.mandatory = false,
   });
 
   @override
@@ -198,10 +229,10 @@ class _PermissionCard extends StatelessWidget {
         duration: const Duration(milliseconds: 300),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: granted ? AppTheme.green.withOpacity(0.06) : Colors.white,
+          color: granted ? AppTheme.green.withValues(alpha: 0.06) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: granted ? AppTheme.green : AppTheme.orange.withOpacity(0.2),
+            color: granted ? AppTheme.green : AppTheme.orange.withValues(alpha: 0.2),
             width: 1.5,
           ),
         ),
@@ -225,10 +256,30 @@ class _PermissionCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 15),
+                  Row(
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 15),
+                      ),
+                      if (mandatory) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppTheme.danger.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text('Required',
+                              style: TextStyle(
+                                  color: AppTheme.danger,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -240,7 +291,7 @@ class _PermissionCard extends StatelessWidget {
             ),
             if (!granted)
               Icon(Icons.chevron_right_rounded,
-                  color: AppTheme.orange.withOpacity(0.6)),
+                  color: AppTheme.orange.withValues(alpha: 0.6)),
           ],
         ),
       ),

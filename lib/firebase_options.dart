@@ -25,14 +25,15 @@ class DefaultFirebaseOptions {
     }
   }
 
-  // ⚠️ REPLACE THESE VALUES with your own from Firebase Console
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'YOUR_ANDROID_API_KEY',
-    appId: 'YOUR_ANDROID_APP_ID',
-    messagingSenderId: 'YOUR_SENDER_ID',
-    projectId: 'YOUR_PROJECT_ID',
-    storageBucket: 'YOUR_PROJECT_ID.appspot.com',
+    apiKey: 'AIzaSyA86bYEuU4dzf3Poep_Qbk6MGld2z-fC8U',
+    appId: '1:1071466397976:android:88494cbb9eae4235535e6d',
+    messagingSenderId: '1071466397976',
+    projectId: 'emadad-a1d92',
+    storageBucket: 'emadad-a1d92.firebasestorage.app',
   );
+
+  // ⚠️ REPLACE THESE VALUES with your own from Firebase Console
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'YOUR_IOS_API_KEY',

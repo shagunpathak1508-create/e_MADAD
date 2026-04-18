@@ -1,42 +1,122 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+
+import 'demo_service.dart';
 
 class LocationService {
   static const _trailKey = 'location_trail';
   static const _maxTrailPoints = 20;
   static Timer? _timer;
 
-  static Future<Position?> getCurrentLocation() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return null;
+  // ── GPS cache: avoid 15-second re-acquisition on every screen ─────────────
+  static Position? _cachedPosition;
+  static DateTime? _cachedAt;
+  static const _cacheTtl = Duration(seconds: 60);
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return null;
-      }
-      if (permission == LocationPermission.deniedForever) return null;
+  // ── Fallback demo position (Mumbai centre) — matches seed data ────────────
+  static Position get _demoPosition => Position(
+    latitude: DemoService.baseLat,
+    longitude: DemoService.baseLng,
+    timestamp: DateTime.now(),
+    accuracy: 50, altitude: 0, altitudeAccuracy: 0,
+    heading: 0, headingAccuracy: 0, speed: 0, speedAccuracy: 0,
+  );
 
-      return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-    } catch (e) {
-      return null;
+  /// Returns current position.
+  /// Priority: cache → GPS → last known → demo fallback (NEVER null).
+  static Future<Position> getCurrentLocation() async {
+    // 1. Return cache if still fresh
+    if (_cachedPosition != null &&
+        _cachedAt != null &&
+        DateTime.now().difference(_cachedAt!) < _cacheTtl) {
+      return _cachedPosition!;
     }
+
+    // 2. Web has limited location support — skip service checks
+    if (!kIsWeb) {
+      try {
+        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!serviceEnabled) {
+          debugPrint('[LocationService] Location service disabled — using demo position');
+          return _getFallback();
+        }
+
+        var permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+        }
+        if (permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever) {
+          debugPrint('[LocationService] Permission denied — using demo position');
+          return _getFallback();
+        }
+      } catch (e) {
+        debugPrint('[LocationService] Permission check error: $e');
+        return _getFallback();
+      }
+    }
+
+    // 3. Attempt real GPS acquisition
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium, // faster fix than high, works on emulators
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      _cachedPosition = pos;
+      _cachedAt = DateTime.now();
+      debugPrint('[LocationService] GPS acquired: ${pos.latitude}, ${pos.longitude}');
+      return pos;
+    } catch (e) {
+      debugPrint('[LocationService] GPS failed ($e) — trying last known');
+    }
+
+    // 4. Fall back to last known position (fast, no timeout)
+    try {
+      if (!kIsWeb) {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last != null) {
+          _cachedPosition = last;
+          _cachedAt = DateTime.now();
+          debugPrint('[LocationService] Using last known position: ${last.latitude}, ${last.longitude}');
+          return last;
+        }
+      }
+    } catch (e) {
+      debugPrint('[LocationService] Last known failed: $e');
+    }
+
+    // 5. Final fallback — demo location so Maps always render
+    return _getFallback();
+  }
+
+  static Position _getFallback() {
+    if (_cachedPosition != null) return _cachedPosition!;
+    debugPrint('[LocationService] Using demo position (Mumbai centre)');
+    final demo = _demoPosition;
+    _cachedPosition = demo;
+    _cachedAt = DateTime.now();
+    return demo;
+  }
+
+  /// Clears cache — call when you need a guaranteed fresh fix.
+  static void clearCache() {
+    _cachedPosition = null;
+    _cachedAt = null;
   }
 
   static void startTracking() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 30), (_) async {
       final pos = await getCurrentLocation();
-      if (pos != null) await _saveToTrail(pos);
+      await _saveToTrail(pos);
     });
-    getCurrentLocation().then((pos) {
-      if (pos != null) _saveToTrail(pos);
-    });
+    getCurrentLocation().then(_saveToTrail);
   }
 
   static void stopTracking() {
@@ -68,7 +148,7 @@ class LocationService {
     return trail.isNotEmpty ? trail.last : null;
   }
 
-  /// Returns a simple bearing direction from last two points
+  /// Returns a bearing label from the last two trail points.
   static Future<String?> predictDirection() async {
     final trail = await getTrail();
     if (trail.length < 2) return null;
@@ -81,9 +161,23 @@ class LocationService {
     if (dLat > 0 && dLng < 0) return 'North-West';
     if (dLat < 0 && dLng > 0) return 'South-East';
     if (dLat < 0 && dLng < 0) return 'South-West';
-    if (dLat > 0) return 'North';
-    if (dLat < 0) return 'South';
-    if (dLng > 0) return 'East';
+    if (dLat > 0)  return 'North';
+    if (dLat < 0)  return 'South';
+    if (dLng > 0)  return 'East';
     return 'West';
+  }
+
+  /// Haversine distance in metres.
+  static double distanceBetween(
+      double lat1, double lon1, double lat2, double lon2) {
+    const r = 6371000.0;
+    final dLat = (lat2 - lat1) * math.pi / 180;
+    final dLon = (lon2 - lon1) * math.pi / 180;
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1 * math.pi / 180) *
+            math.cos(lat2 * math.pi / 180) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 }

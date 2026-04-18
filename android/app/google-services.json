@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1071466397976",
+    "project_id": "emadad-a1d92",
+    "storage_bucket": "emadad-a1d92.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1071466397976:android:88494cbb9eae4235535e6d",
+        "android_client_info": {
+          "package_name": "com.emadad.emadad"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA86bYEuU4dzf3Poep_Qbk6MGld2z-fC8U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

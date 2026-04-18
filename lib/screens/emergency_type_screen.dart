@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../services/firestore_service.dart';
 
 class EmergencyType {
   final String label;
@@ -112,11 +113,19 @@ class EmergencyTypeScreen extends StatelessWidget {
             final type = _types[i];
             return _EmergencyCard(
               type: type,
-              onTap: () => Navigator.pushNamed(
-                context,
-                '/emergency-response',
-                arguments: type.label,
-              ),
+              onTap: () {
+                // background update active emergency
+                if (FirestoreService.currentEmergencyId != null) {
+                  FirestoreService.updateEmergencyType(
+                      FirestoreService.currentEmergencyId!, type.label);
+                }
+                
+                Navigator.pushNamed(
+                  context,
+                  '/emergency-response',
+                  arguments: type.label,
+                );
+              },
             );
           },
         ),
@@ -177,7 +186,7 @@ class _EmergencyCardState extends State<_EmergencyCard>
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: widget.type.color.withOpacity(0.35),
+                color: widget.type.color.withValues(alpha: 0.35),
                 blurRadius: 16,
                 offset: const Offset(0, 6),
               ),
@@ -190,7 +199,7 @@ class _EmergencyCardState extends State<_EmergencyCard>
                 width: 52,
                 height: 52,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Icon(widget.type.icon, color: Colors.white, size: 28),
@@ -208,7 +217,7 @@ class _EmergencyCardState extends State<_EmergencyCard>
               Text(
                 widget.type.subtitle,
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
+                  color: Colors.white.withValues(alpha: 0.8),
                   fontSize: 12,
                 ),
               ),

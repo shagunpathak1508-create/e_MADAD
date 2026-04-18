@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'services/location_service.dart';
+import 'services/connectivity_service.dart';
+import 'services/firestore_seed_service.dart';
 import 'screens/permissions_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/sos_screen.dart';
@@ -19,7 +21,7 @@ import 'screens/volunteer_dashboard_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Firebase init
+  bool firebaseInitialized = false;
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     
@@ -28,17 +30,49 @@ void main() async {
       persistenceEnabled: true,
       cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
     );
-
-    // Anonymous auth
-    if (FirebaseAuth.instance.currentUser == null) {
-      await FirebaseAuth.instance.signInAnonymously();
-    }
+    firebaseInitialized = true;
   } catch (e) {
-    debugPrint('Firebase not configured properly: \$e\\nPlease run flutterfire configure.');
+    debugPrint('Firebase core initialization failed: $e\nPlease check configuration.');
+  }
+
+  if (firebaseInitialized) {
+    try {
+      // Anonymous auth
+      if (FirebaseAuth.instance.currentUser == null) {
+        await FirebaseAuth.instance.signInAnonymously();
+      }
+    } catch (e) {
+      debugPrint('Firebase Anonymous Auth failed: $e\nApp will run in degraded/offline mode.');
+    }
+  }
+
+  if (!firebaseInitialized) {
+    runApp(const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Text(
+              'Firebase Initialization Failed.\nPlease check configuration.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.red, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ),
+    ));
+    return;
   }
 
   // Start GPS tracking for offline trail
   LocationService.startTracking();
+
+  // Start connectivity monitoring
+  ConnectivityService.startListening();
+
+  // Seed demo data in background (non-blocking, runs only once)
+  FirestoreSeedService.seedIfNeeded();
 
   runApp(const EMadadApp());
 }
@@ -166,7 +200,7 @@ class _LogoWidget extends StatelessWidget {
             borderRadius: BorderRadius.circular(22),
             boxShadow: [
               BoxShadow(
-                  color: AppTheme.orange.withOpacity(0.4),
+                  color: AppTheme.orange.withValues(alpha: 0.4),
                   blurRadius: 24, offset: const Offset(0, 8))
             ],
           ),

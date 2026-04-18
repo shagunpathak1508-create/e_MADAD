@@ -3,8 +3,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../theme/app_theme.dart';
 import '../models/volunteer_model.dart';
-import '../models/help_request_model.dart';
+import '../models/emergency_model.dart';
 import '../services/firestore_service.dart';
+import '../services/cache_service.dart';
 
 
 class VolunteerDashboardScreen extends StatefulWidget {
@@ -16,31 +17,54 @@ class VolunteerDashboardScreen extends StatefulWidget {
 
 class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
   VolunteerModel? _volunteer;
-  bool _loading = true;
   String? _vid;
+  bool _showAllTasks = false;
+  late Stream<List<EmergencyModel>> _requestsStream;
 
   @override
   void initState() {
     super.initState();
+    _requestsStream = FirestoreService.volunteerIncomingRequests();
     _loadVolunteer();
   }
 
   Future<void> _loadVolunteer() async {
+    // Show cache/dummy FIRST — never block with loader
+    final cached = await CacheService.getCachedProfile();
+    if (mounted && cached != null) {
+      setState(() => _volunteer = cached);
+    } else if (mounted && _volunteer == null) {
+      // Show a dummy profile while loading
+      setState(() => _volunteer = VolunteerModel(
+        id: '',
+        name: 'Loading...',
+        phone: '',
+        skills: [],
+        available: false,
+        tasksCompleted: 0,
+        rating: 0,
+      ));
+    }
+
     final prefs = await SharedPreferences.getInstance();
     _vid = prefs.getString('volunteer_id');
     if (_vid != null) {
-      final vol = await FirestoreService.getVolunteer(_vid!);
-      if (!mounted) return;
-      setState(() { _volunteer = vol; _loading = false; });
-    } else {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      try {
+        final vol = await FirestoreService.getVolunteer(_vid!);
+        if (!mounted) return;
+        if (vol != null) {
+          setState(() => _volunteer = vol);
+          CacheService.cacheProfile(vol);
+        }
+      } catch (e) {
+        debugPrint('Failed to fetch volunteer: $e');
+      }
     }
   }
 
   void _toggleAvailability() {
     if (_volunteer == null || _vid == null) return;
-    final newVal = !_volunteer!.isAvailable;
+    final newVal = !_volunteer!.available;
     final label = newVal ? 'Go Active' : 'Turn Off Availability';
     showDialog(
       context: context,
@@ -61,7 +85,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
               Navigator.pop(ctx);
               await FirestoreService.updateAvailability(_vid!, newVal);
               setState(() {
-                _volunteer = _volunteer!.copyWith(isAvailable: newVal);
+                _volunteer = _volunteer!.copyWith(available: newVal);
               });
             },
             style: ElevatedButton.styleFrom(
@@ -79,11 +103,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(
-          body: Center(child: CircularProgressIndicator(color: AppTheme.green)));
-    }
-
+    // No blocking loader — show UI immediately with cached/dummy data
     if (_volunteer == null) {
       return Scaffold(
         backgroundColor: AppTheme.offWhite,
@@ -144,7 +164,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                    color: AppTheme.green.withOpacity(0.35),
+                    color: AppTheme.green.withValues(alpha: 0.35),
                     blurRadius: 20, offset: const Offset(0, 6))
               ],
             ),
@@ -152,7 +172,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
               children: [
                 CircleAvatar(
                   radius: 30,
-                  backgroundColor: Colors.white.withOpacity(0.2),
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
                   child: Text(vol.name.isNotEmpty ? vol.name[0].toUpperCase() : '?',
                       style: const TextStyle(
                           color: Colors.white,
@@ -169,7 +189,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
                               fontWeight: FontWeight.w800, fontSize: 17)),
                       Text(vol.phone,
                           style: TextStyle(
-                              color: Colors.white.withOpacity(0.8), fontSize: 13)),
+                              color: Colors.white.withValues(alpha: 0.8), fontSize: 13)),
                       const SizedBox(height: 6),
                       Wrap(
                         spacing: 6, runSpacing: 4,
@@ -177,7 +197,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
+                              color: Colors.white.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(8)),
                           child: Text(s,
                               style: const TextStyle(
@@ -193,7 +213,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
           ),
           const SizedBox(height: 14),
 
-          // Reliability score bar
+          // Reliability score bar with ⭐ format
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -206,12 +226,26 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Reliability Score',
-                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                    Text('$score%',
-                        style: const TextStyle(
-                            color: AppTheme.orange,
-                            fontWeight: FontWeight.w800, fontSize: 16)),
+                    Row(
+                      children: [
+                        const Text('⭐ ', style: TextStyle(fontSize: 16)),
+                        Text('${vol.displayRating.toStringAsFixed(1)} Reliability',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                      ],
+                    ),
+                    if (score >= 80)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.green.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text('Highly Reliable',
+                            style: TextStyle(
+                                color: AppTheme.green,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700)),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -350,7 +384,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
                           dotData: const FlDotData(show: false),
                           belowBarData: BarAreaData(
                             show: true,
-                            color: AppTheme.orange.withOpacity(0.08),
+                            color: AppTheme.orange.withValues(alpha: 0.08),
                           ),
                         ),
                       ],
@@ -373,31 +407,31 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
               duration: const Duration(milliseconds: 300),
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                color: vol.isAvailable
-                    ? AppTheme.danger.withOpacity(0.07)
-                    : AppTheme.green.withOpacity(0.07),
+                color: vol.available
+                    ? AppTheme.danger.withValues(alpha: 0.07)
+                    : AppTheme.green.withValues(alpha: 0.07),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: vol.isAvailable
-                      ? AppTheme.danger.withOpacity(0.25)
-                      : AppTheme.green.withOpacity(0.25),
+                  color: vol.available
+                      ? AppTheme.danger.withValues(alpha: 0.25)
+                      : AppTheme.green.withValues(alpha: 0.25),
                 ),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    vol.isAvailable
+                    vol.available
                         ? Icons.power_settings_new_rounded
                         : Icons.check_circle_outline_rounded,
-                    color: vol.isAvailable ? AppTheme.danger : AppTheme.green,
+                    color: vol.available ? AppTheme.danger : AppTheme.green,
                     size: 22,
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    vol.isAvailable ? 'Turn Off Availability' : 'Go Active',
+                    vol.available ? 'Turn Off Availability' : 'Go Active',
                     style: TextStyle(
-                      color: vol.isAvailable ? AppTheme.danger : AppTheme.green,
+                      color: vol.available ? AppTheme.danger : AppTheme.green,
                       fontWeight: FontWeight.w700,
                       fontSize: 15,
                     ),
@@ -421,22 +455,38 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
           ),
           const SizedBox(height: 12),
 
-          StreamBuilder<List<HelpRequestModel>>(
-            stream: FirestoreService.volunteerIncomingRequests(),
+          StreamBuilder<List<EmergencyModel>>(
+            stream: _requestsStream,
             builder: (ctx, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
-                return const Center(
-                    child: CircularProgressIndicator(color: AppTheme.orange));
+                // Return immediate fallback if waiting
+                return _DemoRequests(volunteerId: _vid ?? '', showAll: _showAllTasks);
               }
               final requests = snap.data ?? [];
               if (requests.isEmpty) {
-                return _DemoRequests(volunteerId: _vid ?? '');
+                return _DemoRequests(volunteerId: _vid ?? '', showAll: _showAllTasks);
               }
+
+              // Show ONLY ONE task at a time (others in secondary section)
+              final displayed = _showAllTasks ? requests : requests.take(1).toList();
+
               return Column(
-                children: requests.map((r) => _RequestCard(
-                  request: r,
-                  volunteerId: _vid ?? '',
-                )).toList(),
+                children: [
+                  ...displayed.map((r) => _RequestCard(
+                    request: r,
+                    volunteerId: _vid ?? '',
+                  )),
+                  if (requests.length > 1 && !_showAllTasks)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: TextButton.icon(
+                        onPressed: () => setState(() => _showAllTasks = true),
+                        icon: const Icon(Icons.list_alt_rounded, size: 18),
+                        label: Text('View ${requests.length - 1} More Requests'),
+                        style: TextButton.styleFrom(foregroundColor: AppTheme.textGrey),
+                      ),
+                    ),
+                ],
               );
             },
           ),
@@ -451,7 +501,7 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
     barRods: [
       BarChartRodData(
         toY: y,
-        color: x == 3 ? AppTheme.orange : AppTheme.green.withOpacity(0.5),
+        color: x == 3 ? AppTheme.orange : AppTheme.green.withValues(alpha: 0.5),
         width: 20,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
       ),
@@ -479,7 +529,7 @@ class _StatCard extends StatelessWidget {
           Container(
             width: 42, height: 42,
             decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
+                color: color.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12)),
             child: Icon(icon, color: color, size: 22),
           ),
@@ -500,10 +550,59 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _RequestCard extends StatelessWidget {
-  final HelpRequestModel request;
+class _RequestCard extends StatefulWidget {
+  final EmergencyModel request;
   final String volunteerId;
   const _RequestCard({required this.request, required this.volunteerId});
+
+  @override
+  State<_RequestCard> createState() => _RequestCardState();
+}
+
+class _RequestCardState extends State<_RequestCard> {
+  bool _accepting = false;
+
+  String _formatAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    return '${diff.inHours}h ago';
+  }
+
+  Future<void> _onAccept() async {
+    setState(() => _accepting = true);
+
+    // Use demo_volunteer as fallback ID so this works even before sign-up
+    final effectiveVolunteerId = widget.volunteerId.isNotEmpty
+        ? widget.volunteerId
+        : 'demo_volunteer';
+
+    final success = await FirestoreService.assignVolunteerToEmergency(
+        widget.request.id, effectiveVolunteerId);
+
+    if (!mounted) return;
+    setState(() => _accepting = false);
+
+    if (success) {
+      Navigator.pushNamed(
+        context,
+        '/map',
+        arguments: {
+          'type': widget.request.type,
+          'victimLat': widget.request.userLat,
+          'victimLng': widget.request.userLng,
+        },
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to accept request. Please try again.'),
+          backgroundColor: AppTheme.danger,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -512,10 +611,10 @@ class _RequestCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.danger.withOpacity(0.2)),
+        border: Border.all(color: AppTheme.danger.withValues(alpha: 0.2)),
         boxShadow: [
           BoxShadow(
-              color: AppTheme.danger.withOpacity(0.08),
+              color: AppTheme.danger.withValues(alpha: 0.08),
               blurRadius: 12, offset: const Offset(0, 4))
         ],
       ),
@@ -526,7 +625,7 @@ class _RequestCard extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
-              color: AppTheme.danger.withOpacity(0.06),
+              color: AppTheme.danger.withValues(alpha: 0.06),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(17)),
             ),
             child: Row(
@@ -537,7 +636,7 @@ class _RequestCard extends StatelessWidget {
                     const Icon(Icons.warning_rounded,
                         color: AppTheme.danger, size: 16),
                     const SizedBox(width: 6),
-                    Text(request.emergencyType,
+                    Text(widget.request.type,
                         style: const TextStyle(
                             color: AppTheme.danger,
                             fontWeight: FontWeight.w800, fontSize: 15)),
@@ -547,7 +646,7 @@ class _RequestCard extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.amber.withOpacity(0.15),
+                    color: Colors.amber.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Text('PENDING',
@@ -563,54 +662,72 @@ class _RequestCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(request.specificAction,
+                Text(widget.request.specificAction.isEmpty
+                    ? widget.request.type
+                    : widget.request.specificAction,
                     style: const TextStyle(
                         fontWeight: FontWeight.w600, fontSize: 14)),
+                const SizedBox(height: 6),
+                // Last known victim location label
+                if (widget.request.userLat != 0 || widget.request.userLng != 0)
+                  Text(
+                    'Last updated ${_formatAgo(widget.request.timestamp)}',
+                    style: TextStyle(
+                        color: AppTheme.textGrey,
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic),
+                  ),
                 const SizedBox(height: 14),
                 Row(
                   children: [
                     Expanded(
                       child: GestureDetector(
-                        onTap: () async {
-                          await FirestoreService.updateRequestStatus(
-                              request.id, 'accepted');
-                          if (!context.mounted) return;
-                          Navigator.pushNamed(context, '/map',
-                              arguments: request.emergencyType);
-                        },
+                        onTap: _accepting ? null : _onAccept,
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           decoration: BoxDecoration(
-                            color: AppTheme.green,
+                            color: _accepting
+                                ? AppTheme.green.withValues(alpha: 0.5)
+                                : AppTheme.green,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.check_rounded,
-                                  color: Colors.white, size: 18),
-                              SizedBox(width: 6),
-                              Text('Accept',
-                                  style: TextStyle(
+                          child: _accepting
+                              ? const Center(
+                                  child: SizedBox(
+                                    width: 18, height: 18,
+                                    child: CircularProgressIndicator(
                                       color: Colors.white,
-                                      fontWeight: FontWeight.w700)),
-                            ],
-                          ),
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              : const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.check_rounded,
+                                        color: Colors.white, size: 18),
+                                    SizedBox(width: 6),
+                                    Text('Accept',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700)),
+                                  ],
+                                ),
                         ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: GestureDetector(
-                        onTap: () => FirestoreService.updateRequestStatus(
-                            request.id, 'declined'),
+                        onTap: () => FirestoreService.updateEmergencyStatus(
+                            widget.request.id, 'declined'),
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           decoration: BoxDecoration(
-                            color: AppTheme.danger.withOpacity(0.07),
+                            color: AppTheme.danger.withValues(alpha: 0.07),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                                color: AppTheme.danger.withOpacity(0.25)),
+                                color: AppTheme.danger.withValues(alpha: 0.25)),
                           ),
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -640,37 +757,47 @@ class _RequestCard extends StatelessWidget {
 
 class _DemoRequests extends StatelessWidget {
   final String volunteerId;
-  const _DemoRequests({required this.volunteerId});
+  final bool showAll;
+  const _DemoRequests({required this.volunteerId, this.showAll = false});
 
   @override
   Widget build(BuildContext context) {
+    // Use real Mumbai coords so victim marker shows on map after accept
+    const baseLat = 19.076;
+    const baseLng = 72.877;
     final demos = [
-      HelpRequestModel(
+      EmergencyModel(
         id: 'demo1',
         victimId: 'v1',
-        emergencyType: 'Medical',
-        specificAction: 'Request medical volunteer',
+        type: 'Medical',
+        specificAction: 'Request medical volunteer — 0.4 km away',
         status: 'pending',
         timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
+        userLat: baseLat + 0.003, userLng: baseLng + 0.002, // ~400m from base
       ),
-      HelpRequestModel(
+      EmergencyModel(
         id: 'demo2',
         victimId: 'v2',
-        emergencyType: 'Fire',
-        specificAction: 'Request help with evacuation',
+        type: 'Fire',
+        specificAction: 'Request evacuation help — 1.1 km away',
         status: 'pending',
         timestamp: DateTime.now().subtract(const Duration(minutes: 12)),
+        userLat: baseLat - 0.008, userLng: baseLng + 0.004, // ~900m from base
       ),
     ];
+
+    // Show ONLY ONE task at a time
+    final displayed = showAll ? demos : demos.take(1).toList();
+
     return Column(
       children: [
         Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.amber.withOpacity(0.1),
+            color: Colors.amber.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.amber.withOpacity(0.3)),
+            border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
           ),
           child: const Row(
             children: [
@@ -685,7 +812,7 @@ class _DemoRequests extends StatelessWidget {
             ],
           ),
         ),
-        ...demos.map((r) => _RequestCard(request: r, volunteerId: volunteerId)),
+        ...displayed.map((r) => _RequestCard(request: r, volunteerId: volunteerId)),
       ],
     );
   }

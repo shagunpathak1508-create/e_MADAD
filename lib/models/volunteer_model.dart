@@ -5,29 +5,46 @@ class VolunteerModel {
   final String name;
   final String phone;
   final List<String> skills;
-  bool isAvailable;
+  final double lat;
+  final double lng;
+  bool available;
   final int tasksCompleted;
-  final double responseRate; // 0.0 - 1.0
-  final double reliabilityScore; // computed
-  final GeoPoint? location;
-  final DateTime? lastActive;
+  final double avgResponseTime; // in minutes
+  final double rating;
+  final double responseRate; // Legacy field for computeScore if needed
 
   VolunteerModel({
     required this.id,
     required this.name,
     required this.phone,
     required this.skills,
-    this.isAvailable = false,
+    this.lat = 0.0,
+    this.lng = 0.0,
+    this.available = false,
     this.tasksCompleted = 0,
+    this.avgResponseTime = 0.0,
+    this.rating = 5.0,
     this.responseRate = 0.0,
-    this.location,
-    this.lastActive,
-  }) : reliabilityScore = _computeScore(tasksCompleted, responseRate);
+  });
 
-  static double _computeScore(int tasks, double rate) {
-    final taskScore = (tasks / 50).clamp(0.0, 1.0);
-    return (taskScore * 0.6 + rate * 0.4) * 100;
+  /// Reliability score (0–100) based on tasks, rating, and response time.
+  /// - 0 tasks, 0 avgResponse, 5.0 rating → ~55 (2.75⭐)
+  /// - 25 tasks, 5 min avg, 4.8 rating  → ~78 (3.9⭐)
+  /// - 50 tasks, 3 min avg, 5.0 rating  → ~97 (4.85⭐)
+  double get reliabilityScore {
+    // Rating component (0–1)
+    final ratingComponent = (rating / 5.0).clamp(0.0, 1.0);
+    // Task experience component (0–1), max at 50 tasks
+    final taskComponent = (tasksCompleted / 50).clamp(0.0, 1.0);
+    // Response time component (0–1), lower avg is better; unknown → 0.5
+    final responseComponent = avgResponseTime <= 0
+        ? 0.5
+        : (1.0 - (avgResponseTime / 30)).clamp(0.0, 1.0);
+    return (taskComponent * 0.3 + ratingComponent * 0.4 + responseComponent * 0.3) * 100;
   }
+
+  /// Display rating on a 0–5 star scale (derived from reliabilityScore).
+  double get displayRating => (reliabilityScore / 20).clamp(0.0, 5.0);
 
   factory VolunteerModel.fromMap(Map<String, dynamic> map, String docId) {
     return VolunteerModel(
@@ -35,11 +52,13 @@ class VolunteerModel {
       name: map['name'] ?? '',
       phone: map['phone'] ?? '',
       skills: List<String>.from(map['skills'] ?? []),
-      isAvailable: map['isAvailable'] ?? false,
+      lat: (map['lat'] ?? (map['location'] as GeoPoint?)?.latitude ?? 0.0).toDouble(),
+      lng: (map['lng'] ?? (map['location'] as GeoPoint?)?.longitude ?? 0.0).toDouble(),
+      available: map['available'] ?? map['isAvailable'] ?? false,
       tasksCompleted: map['tasksCompleted'] ?? 0,
+      avgResponseTime: (map['avgResponseTime'] ?? 0.0).toDouble(),
+      rating: (map['rating'] ?? 5.0).toDouble(),
       responseRate: (map['responseRate'] ?? 0.0).toDouble(),
-      location: map['location'] as GeoPoint?,
-      lastActive: (map['lastActive'] as Timestamp?)?.toDate(),
     );
   }
 
@@ -47,22 +66,26 @@ class VolunteerModel {
         'name': name,
         'phone': phone,
         'skills': skills,
-        'isAvailable': isAvailable,
+        'lat': lat,
+        'lng': lng,
+        'available': available,
         'tasksCompleted': tasksCompleted,
+        'avgResponseTime': avgResponseTime,
+        'rating': rating,
         'responseRate': responseRate,
-        'location': location,
-        'lastActive': lastActive != null ? Timestamp.fromDate(lastActive!) : null,
       };
 
-  VolunteerModel copyWith({bool? isAvailable}) => VolunteerModel(
+  VolunteerModel copyWith({bool? available}) => VolunteerModel(
         id: id,
         name: name,
         phone: phone,
         skills: skills,
-        isAvailable: isAvailable ?? this.isAvailable,
+        lat: lat,
+        lng: lng,
+        available: available ?? this.available,
         tasksCompleted: tasksCompleted,
+        avgResponseTime: avgResponseTime,
+        rating: rating,
         responseRate: responseRate,
-        location: location,
-        lastActive: lastActive,
       );
 }
