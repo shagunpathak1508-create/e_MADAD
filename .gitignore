@@ -43,3 +43,11 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# ── Security: API keys — NEVER commit these ──────────────────────────────────
+android/local.properties
+*.env
+.env.local
+.env.*.local
+gemini_key.txt
+lib/config/secrets.dart

@@ -1,0 +1,24 @@
+# flutter_native_splash configuration
+# Run: dart run flutter_native_splash:create
+# to regenerate the native splash files after changes.
+
+flutter_native_splash:
+  # Background colour — matches AppTheme.white / offWhite
+  color: "#FFFFFF"
+
+  # Logo image — centred on the native splash
+  image: assets/logo.png
+
+  # Keep splash visible until Flutter is fully ready
+  fullscreen: false
+
+  # Android-specific
+  android: true
+  android_12:
+    # Android 12+ uses a different splash API (SplashScreen API)
+    image: assets/logo.png
+    color: "#FFFFFF"
+    icon_background_color: "#FF6B00"
+
+  # iOS-specific (safe to keep for future iOS builds)
+  ios: true

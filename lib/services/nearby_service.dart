@@ -44,7 +44,7 @@ class NearbyPlace {
 
 class NearbyService {
   static const _overpassUrl = 'https://overpass-api.de/api/interpreter';
-  static const _requestTimeout = Duration(seconds: 8);
+  static const _requestTimeout = Duration(seconds: 5);
 
   static Future<List<NearbyPlace>> fetchNearby({
     required double lat,
@@ -87,7 +87,7 @@ class NearbyService {
   static Future<List<NearbyPlace>> _query(
       double lat, double lng, String tag, int radius) async {
     final query = '''
-[out:json][timeout:8];
+[out:json][timeout:5];
 (
   node[$tag](around:$radius,$lat,$lng);
   way[$tag](around:$radius,$lat,$lng);
