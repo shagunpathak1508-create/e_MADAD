@@ -48,6 +48,11 @@
       min-height: 100%;
       background-color: #FFFFFF;
           background-size: 100% 100%;
+      /* Prevent long-press browser context menu / image popup */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     .center {
@@ -122,6 +127,17 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <!-- Prevent browser long-press context menu (fixes SOS button on mobile) -->
+  <script>
+    document.addEventListener('contextmenu', function(event) {
+      event.preventDefault();
+    });
+    // Suppress long-press image/link callout on iOS
+    document.addEventListener('touchstart', function(event) {
+      // allow normal touch; just flag that we handled it
+    }, { passive: true });
+  </script>
+
   <script src="flutter_bootstrap.js" async=""></script>
 
 

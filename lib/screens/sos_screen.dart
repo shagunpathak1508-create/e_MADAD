@@ -18,6 +18,8 @@ class _SosScreenState extends State<SosScreen>
   late Animation<double> _pulseAnim;
   bool _holding = false;
   bool _activated = false;
+  // Guard: prevents Listener and GestureDetector from double-firing
+  bool _pointerDownActive = false;
 
   @override
   void initState() {
@@ -79,12 +81,16 @@ class _SosScreenState extends State<SosScreen>
   }
 
   void _onHoldStart() {
+    if (_pointerDownActive || _activated) return;
+    _pointerDownActive = true;
     setState(() => _holding = true);
     _pulseController.stop();
     _progressController.forward(from: 0);
   }
 
   void _onHoldEnd() {
+    if (!_pointerDownActive) return;
+    _pointerDownActive = false;
     if (!_activated) {
       setState(() => _holding = false);
       _pulseController.repeat(reverse: true);
@@ -137,102 +143,109 @@ class _SosScreenState extends State<SosScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  GestureDetector(
-                    onLongPressStart: (_) => _onHoldStart(),
-                    onLongPressEnd: (_) => _onHoldEnd(),
-                    onLongPressCancel: _onHoldEnd,
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge(
-                          [_pulseAnim, _progressController]),
-                      builder: (context, _) {
-                        return Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Outer glow ring 1
-                            Transform.scale(
-                              scale: _holding ? 1.0 : _pulseAnim.value * 1.3,
-                              child: Container(
-                                width: 200,
-                                height: 200,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: buttonColor.withValues(alpha: 0.08),
+                  // Listener fires on raw pointer events — beats browser
+                  // context menu which only triggers after ~500 ms of hold.
+                  Listener(
+                    onPointerDown: (_) => _onHoldStart(),
+                    onPointerUp: (_) => _onHoldEnd(),
+                    onPointerCancel: (_) => _onHoldEnd(),
+                    child: GestureDetector(
+                      // Keep as fallback / handles drag-off cancellation
+                      behavior: HitTestBehavior.opaque,
+                      onLongPressCancel: _onHoldEnd,
+                      child: AnimatedBuilder(
+                        animation: Listenable.merge(
+                            [_pulseAnim, _progressController]),
+                        builder: (context, _) {
+                          return Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Outer glow ring 1
+                              Transform.scale(
+                                scale: _holding ? 1.0 : _pulseAnim.value * 1.3,
+                                child: Container(
+                                  width: 200,
+                                  height: 200,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: buttonColor.withValues(alpha: 0.08),
+                                  ),
                                 ),
                               ),
-                            ),
-                            // Outer glow ring 2
-                            Transform.scale(
-                              scale: _holding ? 1.0 : _pulseAnim.value * 1.15,
-                              child: Container(
-                                width: 170,
-                                height: 170,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: buttonColor.withValues(alpha: 0.12),
+                              // Outer glow ring 2
+                              Transform.scale(
+                                scale: _holding ? 1.0 : _pulseAnim.value * 1.15,
+                                child: Container(
+                                  width: 170,
+                                  height: 170,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: buttonColor.withValues(alpha: 0.12),
+                                  ),
                                 ),
                               ),
-                            ),
-                            // Progress ring (green, shows when holding)
-                            if (_holding && !_activated)
-                              SizedBox(
-                                width: 160,
-                                height: 160,
-                                child: CircularProgressIndicator(
-                                  value: _progressController.value,
-                                  strokeWidth: 5,
-                                  backgroundColor: Colors.transparent,
-                                  valueColor:
-                                      const AlwaysStoppedAnimation<Color>(
-                                          AppTheme.green),
-                                  strokeCap: StrokeCap.round,
+                              // Progress ring (green, shows when holding)
+                              if (_holding && !_activated)
+                                SizedBox(
+                                  width: 160,
+                                  height: 160,
+                                  child: CircularProgressIndicator(
+                                    value: _progressController.value,
+                                    strokeWidth: 5,
+                                    backgroundColor: Colors.transparent,
+                                    valueColor:
+                                        const AlwaysStoppedAnimation<Color>(
+                                            AppTheme.green),
+                                    strokeCap: StrokeCap.round,
+                                  ),
                                 ),
-                              ),
-                            // Main SOS button
-                            Transform.scale(
-                              scale: _holding ? 0.95 : 1.0,
-                              child: Container(
-                                width: 140,
-                                height: 140,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: buttonColor,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: buttonColor.withValues(alpha: 0.5),
-                                      blurRadius: 30,
-                                      spreadRadius: 4,
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      _activated
-                                          ? Icons.check_rounded
-                                          : Icons.warning_rounded,
-                                      color: Colors.white,
-                                      size: 36,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      _activated ? 'SENT' : 'SOS',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 2,
+                              // Main SOS button
+                              Transform.scale(
+                                scale: _holding ? 0.95 : 1.0,
+                                child: Container(
+                                  width: 140,
+                                  height: 140,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: buttonColor,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: buttonColor.withValues(alpha: 0.5),
+                                        blurRadius: 30,
+                                        spreadRadius: 4,
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        _activated
+                                            ? Icons.check_rounded
+                                            : Icons.warning_rounded,
+                                        color: Colors.white,
+                                        size: 36,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _activated ? 'SENT' : 'SOS',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: 2,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
+                            ],
+                          );
+                        },
+                      ),
+                    ), // GestureDetector
+                  ), // Listener
                   const SizedBox(height: 36),
                   Text(
                     _activated ? 'Emergency Activated!' : 'Hold for SOS',
